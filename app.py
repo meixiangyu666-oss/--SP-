@@ -5,6 +5,72 @@ import re
 import uuid
 import os
 
+# 设置页面配置
+st.set_page_config(page_title="SP-批量模版生成工具", page_icon="📊", layout="centered")
+
+# 自定义 CSS 样式
+st.markdown("""
+    <style>
+    /* 主标题样式 */
+    .main-title {
+        font-size: 2.5em;
+        font-weight: bold;
+        color: #2C3E50;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    /* 提示文字样式 */
+    .instruction {
+        font-size: 1.1em;
+        color: #34495E;
+        margin-bottom: 20px;
+    }
+    /* 按钮样式 */
+    .stButton>button {
+        background-color: #3498DB;
+        color: white;
+        border-radius: 8px;
+        padding: 10px 20px;
+        font-size: 1em;
+        font-weight: bold;
+    }
+    .stButton>button:hover {
+        background-color: #2980B9;
+    }
+    /* 下拉菜单样式 */
+    .stSelectbox label {
+        font-size: 1.1em;
+        color: #2C3E50;
+        font-weight: bold;
+    }
+    /* 文件上传框样式 */
+    .stFileUploader label {
+        font-size: 1.1em;
+        color: #2C3E50;
+        font-weight: bold;
+    }
+    /* 成功和错误消息样式 */
+    .stSuccess {
+        background-color: #E8F5E9;
+        border-left: 5px solid #4CAF50;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .stError {
+        background-color: #FFEBEE;
+        border-left: 5px solid #F44336;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .stWarning {
+        background-color: #FFF3E0;
+        border-left: 5px solid #FF9800;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    </style>
+""", unsafe_allow_html=True)
+
 # 通用函数：从调研 Excel 生成表头 Excel
 def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=0):
     try:
@@ -35,7 +101,7 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
         ).set_index('广告活动名称')[required_cols].to_dict('index')
     else:
         campaign_to_values = {}
-        st.warning(f"警告：缺少列 {set(required_cols) - set(non_empty_campaigns.columns)}，使用默认值")
+        st.warning(f"警告：缺少列 {set(required_cols) - set(non_empty_campaigns.columns)}，将使用默认值")
     
     st.write(f"生成的字典（有 {len(campaign_to_values)} 个活动）: {campaign_to_values}")
     
@@ -45,7 +111,7 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
     
     # 检查关键词重复
     duplicates_found = False
-    st.write("\n=== 检查关键词重复 ===")
+    st.write("### 检查关键词重复")
     for col in keyword_columns:
         col_index = list(df_survey.columns).index(col) + 1
         col_letter = chr(64 + col_index) if col_index <= 26 else f"{chr(64 + (col_index-1)//26)}{chr(64 + (col_index-1)%26 + 1)}"
@@ -54,7 +120,7 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
         if len(kw_list) > len(set(kw_list)):
             duplicates_mask = df_survey[col].duplicated(keep=False)
             duplicates_df = df_survey[duplicates_mask][[col]].dropna()
-            st.warning(f"警告：{col_letter} 列 ({col}) 有重复关键词")
+            st.warning(f"警告：{col_letter} 列 ({col}) 存在重复关键词")
             for _, row in duplicates_df.iterrows():
                 kw = str(row[col]).strip()
                 count = (df_survey[col] == kw).sum()
@@ -63,7 +129,7 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
             duplicates_found = True
     
     if duplicates_found:
-        st.error("提示：由于检测到关键词重复，本次不生成表格。请清理重复后重试。")
+        st.error("提示：由于检测到关键词重复，生成已终止。请清理重复关键词后重试。")
         return None
     
     st.write("关键词无重复，继续生成...")
@@ -452,46 +518,48 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
         return None
 
 # Streamlit 界面
-st.title("Excel Header 生成工具")
-st.write("请选择国家并上传 Excel 文件，点击按钮生成对应的 Header 文件。")
+st.markdown('<div class="main-title">SP-批量模版生成工具</div>', unsafe_allow_html=True)
+st.markdown('<div class="instruction">请选择国家并上传 Excel 文件，点击按钮生成对应的 Header 文件（支持任意文件名的 .xlsx 文件）。<br>Please select a country and upload an Excel file, then click the button to generate the corresponding Header file (supports any .xlsx filename).</div>', unsafe_allow_html=True)
 
 # 国家选择
-country = st.selectbox("选择国家", ["JP", "K EU"])
+country = st.selectbox("选择国家 / Select Country", ["JP", "K EU"])
 
 # 文件上传
-uploaded_file = st.file_uploader("上传 Excel 文件", type=["xlsx"])
+uploaded_file = st.file_uploader("上传 Excel 文件 / Upload Excel File", type=["xlsx"])
 
 if uploaded_file is not None:
     # 动态生成输出文件名
     output_file = f"header-{country.replace(' ', '_')}.xlsx"
     
     # 运行按钮
-    if st.button("生成 Header 文件"):
-        with st.spinner("正在处理文件..."):
+    if st.button("生成 Header 文件 / Generate Header File"):
+        with st.spinner("正在处理文件... / Processing file..."):
             result = generate_header_from_survey(uploaded_file, output_file, country)
             if result and os.path.exists(result):
                 with open(result, "rb") as f:
                     st.download_button(
-                        label=f"下载 {output_file}",
+                        label=f"下载 {output_file} / Download {output_file}",
                         data=f,
                         file_name=output_file,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     )
                 # 调试信息
-                keyword_rows = [row for row in pd.read_excel(result).to_dict('records') if row['实体层级'] == '关键词']
-                st.write(f"关键词行数量: {len(keyword_rows)}")
+                st.markdown("### 处理结果 / Processing Results")
+                df_result = pd.read_excel(result)
+                keyword_rows = [row for row in df_result.to_dict('records') if row['实体层级'] == '关键词']
+                st.write(f"关键词行数量 / Keyword Rows: {len(keyword_rows)}")
                 if keyword_rows:
-                    st.write(f"示例关键词行: 实体层级={keyword_rows[0]['实体层级']}, 关键词文本={keyword_rows[0]['关键词文本']}, 匹配类型={keyword_rows[0]['匹配类型']}")
-                product_targeting_rows = [row for row in pd.read_excel(result).to_dict('records') if row['实体层级'] == '商品定向']
-                st.write(f"商品定向行数量: {len(product_targeting_rows)}")
+                    st.write(f"示例关键词行 / Example Keyword Row: 实体层级={keyword_rows[0]['实体层级']}, 关键词文本={keyword_rows[0]['关键词文本']}, 匹配类型={keyword_rows[0]['匹配类型']}")
+                product_targeting_rows = [row for row in df_result.to_dict('records') if row['实体层级'] == '商品定向']
+                st.write(f"商品定向行数量 / Product Targeting Rows: {len(product_targeting_rows)}")
                 if product_targeting_rows:
-                    st.write(f"示例商品定向行: 实体层级={product_targeting_rows[0]['实体层级']}, 竞价={product_targeting_rows[0]['竞价']}, 拓展商品投放编号={product_targeting_rows[0]['拓展商品投放编号']}")
+                    st.write(f"示例商品定向行 / Example Product Targeting Row: 实体层级={product_targeting_rows[0]['实体层级']}, 竞价={product_targeting_rows[0]['竞价']}, 拓展商品投放编号={product_targeting_rows[0]['拓展商品投放编号']}")
                 if country == 'K EU':
-                    bid_adjustment_rows = [row for row in pd.read_excel(result).to_dict('records') if row['实体层级'] == '竞价调整']
-                    st.write(f"竞价调整行数量: {len(bid_adjustment_rows)}")
+                    bid_adjustment_rows = [row for row in df_result.to_dict('records') if row['实体层级'] == '竞价调整']
+                    st.write(f"竞价调整行数量 / Bid Adjustment Rows: {len(bid_adjustment_rows)}")
                     if bid_adjustment_rows:
-                        st.write(f"示例竞价调整行: 实体层级={bid_adjustment_rows[0]['实体层级']}, 广告位={bid_adjustment_rows[0]['广告位']}, 百分比={bid_adjustment_rows[0]['百分比']}")
-                levels = set(row['实体层级'] for row in pd.read_excel(result).to_dict('records'))
-                st.write(f"所有实体层级: {levels}")
+                        st.write(f"示例竞价调整行 / Example Bid Adjustment Row: 实体层级={bid_adjustment_rows[0]['实体层级']}, 广告位={bid_adjustment_rows[0]['广告位']}, 百分比={bid_adjustment_rows[0]['百分比']}")
+                levels = set(row['实体层级'] for row in df_result.to_dict('records'))
+                st.write(f"所有实体层级 / All Entity Levels: {levels}")
             else:
-                st.error("生成文件失败，请检查上传的文件格式或内容。")
+                st.error("生成文件失败，请检查上传的文件格式或内容。 / Failed to generate file, please check the file format or content.")
