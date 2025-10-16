@@ -729,7 +729,7 @@ st.markdown('<div class="main-title">SP-批量模版生成工具</div>', unsafe_
 st.markdown('<div class="instruction">请选择国家并上传 Excel 文件，点击按钮生成对应的 Header 文件（支持任意文件名的 .xlsx 文件）。<br>Please select a country and upload an Excel file, then click the button to generate the corresponding Header file (supports any .xlsx filename).</div>', unsafe_allow_html=True)
 
 # 国家选择
-country = st.selectbox("选择国家 / Select Country", ["C US", "B US"])
+country = st.selectbox("选择国家 / Select Country", ["C US", "B US", "K US", "A US"])
 
 # 文件上传
 uploaded_file = st.file_uploader("上传 Excel 文件 / Upload Excel File", type=["xlsx"])
@@ -743,7 +743,7 @@ if uploaded_file is not None:
         with st.spinner("正在处理文件... / Processing file..."):
             if country == "C US":
                 result = generate_header_from_survey_C(uploaded_file, output_file, country)
-            elif country == "B US":
+            elif country in ["B US", "K US", "A US"]:
                 result = generate_header_from_survey_B(uploaded_file, output_file, country)
             else:
                 st.error("不支持的国家选择。")
