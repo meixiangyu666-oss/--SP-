@@ -236,6 +236,208 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
             None: '精准词'  # XX 组，默认列
         }
     
+    # C US 特定逻辑：否定关键词
+    def get_c_us_neg_keywords(df_survey):
+        neg_exact = list(dict.fromkeys([kw for kw in df_survey.get('否定精准', pd.Series()).dropna() if str(kw).strip()]))
+        neg_phrase = list(dict.fromkeys([kw for kw in df_survey.get('否定词组', pd.Series()).dropna() if str(kw).strip()]))
+        suzhu_extra_neg_exact = list(dict.fromkeys([kw for kw in df_survey.get('宿主额外否精准', pd.Series()).dropna() if str(kw).strip()]))
+        suzhu_extra_neg_phrase = list(dict.fromkeys([kw for kw in df_survey.get('宿主额外否词组', pd.Series()).dropna() if str(kw).strip()]))
+        neg_asin = list(dict.fromkeys([kw for kw in df_survey.get('否定ASIN', pd.Series()).dropna() if str(kw).strip()]))
+        return neg_exact, neg_phrase, suzhu_extra_neg_exact, suzhu_extra_neg_phrase, neg_asin
+    
+    # C US 特定关键词匹配
+    def find_matching_keyword_columns_c_us(campaign_name, df_survey, keyword_columns):
+        campaign_name_normalized = str(campaign_name).lower()
+        matched_category = None
+        keywords = []
+        matched_columns = []
+        
+        # 提取关键词类别
+        keyword_categories = set()
+        for col in keyword_columns:
+            col_lower = str(col).lower()
+            if '/' in col:
+                parts = col_lower.split('/')
+                if parts[0]:
+                    keyword_categories.add(parts[0])
+                if len(parts) > 1 and parts[1]:
+                    chinese_part = parts[1].split('-')[0] if '-' in parts[1] else parts[1]
+                    keyword_categories.add(chinese_part)
+            else:
+                for suffix in ['精准词', '广泛词', '精准', '广泛']:
+                    if col_lower.endswith(suffix):
+                        prefix = col_lower[:-len(suffix)]
+                        if prefix:
+                            keyword_categories.add(prefix)
+                            break
+        
+        keyword_categories.update(['suzhu', '宿主', 'case', '包', 'tape'])
+        st.write(f"识别到的关键词类别: {keyword_categories}")
+        
+        # 匹配关键词类别
+        for cat in keyword_categories:
+            if cat in campaign_name_normalized:
+                matched_category = cat
+                break
+        
+        if matched_category:
+            # 根据匹配类型找到对应的列
+            if '精准' in campaign_name_normalized or 'exact' in campaign_name_normalized:
+                # 查找精准列
+                for col in keyword_columns:
+                    col_lower = str(col).lower()
+                    if matched_category in col_lower and any(x in col_lower for x in ['精准', 'exact']):
+                        matched_columns.append(col)
+                        keywords.extend([kw for kw in df_survey[col].dropna() if str(kw).strip()])
+                        st.write(f"  匹配到精准列: {col}")
+                        break
+            elif '广泛' in campaign_name_normalized or 'broad' in campaign_name_normalized:
+                # 查找广泛列
+                for col in keyword_columns:
+                    col_lower = str(col).lower()
+                    if matched_category in col_lower and any(x in col_lower for x in ['广泛', 'broad']):
+                        matched_columns.append(col)
+                        keywords.extend([kw for kw in df_survey[col].dropna() if str(kw).strip()])
+                        st.write(f"  匹配到广泛列: {col}")
+                        break
+        else:
+            st.write("  无匹配的关键词类别")
+        
+        keywords = list(dict.fromkeys(keywords))  # 去重
+        st.write(f"  关键词数量: {len(keywords)} (示例: {keywords[:2] if keywords else '无'})")
+        
+        return matched_category, keywords
+    
+    # C US 特定否定关键词合并逻辑
+    def get_c_us_campaign_neg_keywords(df_survey, campaign_name, matched_category, is_broad):
+        campaign_name_normalized = str(campaign_name).lower()
+        neg_exact = list(dict.fromkeys([kw for kw in df_survey.get('否定精准', pd.Series()).dropna() if str(kw).strip()]))
+        neg_phrase = list(dict.fromkeys([kw for kw in df_survey.get('否定词组', pd.Series()).dropna() if str(kw).strip()]))
+        
+        neg_keywords = []
+        if is_broad and matched_category:
+            for col in keyword_columns:
+                col_lower = str(col).lower()
+                if matched_category in col_lower and any(x in col_lower for x in ['精准', 'exact']):
+                    neg_keywords.extend([kw for kw in df_survey[col].dropna() if str(kw).strip()])
+                if any(x in campaign_name_normalized for x in ['suzhu', '宿主']) and any(x in col_lower for x in ['case', '包']) and any(x in col_lower for x in ['精准', 'exact']):
+                    neg_keywords.extend([kw for kw in df_survey[col].dropna() if str(kw).strip()])
+            neg_keywords = list(dict.fromkeys(neg_keywords))
+            st.write(f"  精准否定关键词数量: {len(neg_keywords)} (示例: {neg_keywords[:2] if neg_keywords else '无'})")
+        
+        # 合并 neg_exact 和 neg_keywords，去重
+        combined_neg_exact = list(dict.fromkeys(neg_exact + neg_keywords))
+        st.write(f"  合并后的否定精准关键词数量: {len(combined_neg_exact)} (示例: {combined_neg_exact[:2] if combined_neg_exact else '无'})")
+        
+        return combined_neg_exact, neg_phrase
+    
+    # C US 特定ASIN匹配
+    def find_matching_asin_columns_c_us(campaign_name, df_survey, matched_category):
+        campaign_name_normalized = str(campaign_name).lower()
+        asin_targets = []
+        if matched_category:
+            potential_asin_cols = []
+            for col in df_survey.columns:
+                col_lower = str(col).lower()
+                if matched_category in col_lower and 'asin' in col_lower:
+                    potential_asin_cols.append(col)
+            
+            st.write(f"  潜在ASIN列: {potential_asin_cols}")
+            
+            if potential_asin_cols:
+                def calculate_match_score(col_name, campaign_norm):
+                    col_lower = str(col_name).lower()
+                    words = re.split(r'[\s/:-]+', col_lower)
+                    unique_words = [w.strip() for w in words if w.strip() and w not in ['asin', '精准', '广泛', 'exact', 'broad']]
+                    score = sum(1 for word in unique_words if word in campaign_norm)
+                    return score, unique_words
+                
+                scores = {}
+                for col in potential_asin_cols:
+                    score, words = calculate_match_score(col, campaign_name_normalized)
+                    scores[col] = score
+                    st.write(f"    列 '{col}' 独特词: {words}, 分数: {score}")
+                
+                best_col = max(scores, key=scores.get)
+                best_score = scores[best_col]
+                st.write(f"  选择最佳列: {best_col} (分数: {best_score})")
+                
+                asin_targets.extend([kw for kw in df_survey[best_col].dropna() if str(kw).strip()])
+            
+            asin_targets = list(dict.fromkeys(asin_targets))
+            st.write(f"  商品定向 ASIN 数量: {len(asin_targets)} (示例: {asin_targets[:2] if asin_targets else '无'})")
+        
+        return asin_targets
+    
+    # 检查否定关键词重复（C US 特定）
+    def check_neg_duplicates_c_us(df_survey):
+        neg_exact = list(dict.fromkeys([kw for kw in df_survey.get('否定精准', pd.Series()).dropna() if str(kw).strip()]))
+        neg_phrase = list(dict.fromkeys([kw for kw in df_survey.get('否定词组', pd.Series()).dropna() if str(kw).strip()]))
+        suzhu_extra_neg_exact = list(dict.fromkeys([kw for kw in df_survey.get('宿主额外否精准', pd.Series()).dropna() if str(kw).strip()]))
+        suzhu_extra_neg_phrase = list(dict.fromkeys([kw for kw in df_survey.get('宿主额外否词组', pd.Series()).dropna() if str(kw).strip()]))
+        
+        neg_duplicates_found = False
+        st.write("### 检查否定关键词重复")
+        
+        if len(neg_exact) > len(set(neg_exact)):
+            neg_duplicates_found = True
+            st.warning("警告：'否定精准' 列有重复关键词")
+            neg_exact_series = df_survey.get('否定精准', pd.Series()).dropna()
+            duplicates_mask = neg_exact_series.duplicated(keep=False)
+            duplicates_df = df_survey[duplicates_mask].loc[:, '否定精准'].dropna()
+            for _, row in duplicates_df.items():
+                kw = str(row).strip()
+                count = (neg_exact_series == kw).sum()
+                if count > 1:
+                    st.write(f"  重复词: '{kw}' (出现 {count} 次)")
+        
+        if len(neg_phrase) > len(set(neg_phrase)):
+            neg_duplicates_found = True
+            st.warning("警告：'否定词组' 列有重复关键词")
+            neg_phrase_series = df_survey.get('否定词组', pd.Series()).dropna()
+            duplicates_mask = neg_phrase_series.duplicated(keep=False)
+            duplicates_df = df_survey[duplicates_mask].loc[:, '否定词组'].dropna()
+            for _, row in duplicates_df.items():
+                kw = str(row).strip()
+                count = (neg_phrase_series == kw).sum()
+                if count > 1:
+                    st.write(f"  重复词: '{kw}' (出现 {count} 次)")
+        
+        if len(suzhu_extra_neg_exact) > len(set(suzhu_extra_neg_exact)):
+            neg_duplicates_found = True
+            st.warning("警告：'宿主额外否精准' 列有重复关键词")
+            suzhu_exact_series = df_survey.get('宿主额外否精准', pd.Series()).dropna()
+            duplicates_mask = suzhu_exact_series.duplicated(keep=False)
+            duplicates_df = df_survey[duplicates_mask].loc[:, '宿主额外否精准'].dropna()
+            for _, row in duplicates_df.items():
+                kw = str(row).strip()
+                count = (suzhu_exact_series == kw).sum()
+                if count > 1:
+                    st.write(f"  重复词: '{kw}' (出现 {count} 次)")
+        
+        if len(suzhu_extra_neg_phrase) > len(set(suzhu_extra_neg_phrase)):
+            neg_duplicates_found = True
+            st.warning("警告：'宿主额外否词组' 列有重复关键词")
+            suzhu_phrase_series = df_survey.get('宿主额外否词组', pd.Series()).dropna()
+            duplicates_mask = suzhu_phrase_series.duplicated(keep=False)
+            duplicates_df = df_survey[duplicates_mask].loc[:, '宿主额外否词组'].dropna()
+            for _, row in duplicates_df.items():
+                kw = str(row).strip()
+                count = (suzhu_phrase_series == kw).sum()
+                if count > 1:
+                    st.write(f"  重复词: '{kw}' (出现 {count} 次)")
+        
+        if neg_duplicates_found:
+            st.error("提示：由于检测到否定关键词重复，生成已终止。请清理重复后重试。")
+            return True
+        st.write("否定关键词无重复，继续生成...")
+        return False
+    
+    # 根据国家执行特定逻辑
+    if country == 'C US':
+        if check_neg_duplicates_c_us(df_survey):
+            return None
+    
     # 函数：查找匹配的ASIN列（K EU 逻辑，包含颜色匹配）
     def find_matching_asin_columns_k_eu(campaign_name, df_survey, keyword_categories):
         campaign_name_normalized = str(campaign_name).lower()
@@ -528,9 +730,12 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
         
         # 提取关键词
         keywords = []
+        matched_category = None
         matched_columns = []
         if country == 'B US':
             matched_category, keywords = find_matching_keyword_columns_b_us(campaign_name, df_survey, keyword_columns)
+        elif country == 'C US':
+            matched_category, keywords = find_matching_keyword_columns_c_us(campaign_name, df_survey, keyword_columns)
         else:
             matched_columns, keywords = find_matching_keyword_columns(
                 campaign_name, df_survey, keyword_categories, keyword_columns, match_type
@@ -540,11 +745,13 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
         neg_exact = []
         neg_phrase = []
         neg_asin = []
+        suzhu_extra_neg_exact = []
+        suzhu_extra_neg_phrase = []
         if country == 'JP':
             neg_exact, neg_phrase, suzhu_extra_neg_exact, suzhu_extra_neg_phrase, neg_asin = get_jp_neg_keywords(df_survey)
         elif country == 'K EU':
-            matched_category = next((cat for cat in sorted(keyword_categories, key=len) if cat in campaign_name_normalized), None)
-            neg_exact, neg_phrase, neg_asin = get_k_eu_neg_keywords(df_survey, campaign_name, matched_category, is_broad, is_exact)
+            matched_category_k_eu = next((cat for cat in sorted(keyword_categories, key=len) if cat in campaign_name_normalized), None)
+            neg_exact, neg_phrase, neg_asin = get_k_eu_neg_keywords(df_survey, campaign_name, matched_category_k_eu, is_broad, is_exact)
         elif country == 'B US':
             # B US 特定否定关键词
             keyword_categories_map = get_b_us_keyword_categories()
@@ -552,12 +759,18 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
                               for key, col in keyword_categories_map.items() if col in df_survey.columns}
             neg_exact, neg_phrase = get_b_us_campaign_neg_keywords(df_survey, campaign_name, matched_category, is_exact, is_broad, exact_keywords)
             neg_asin = list(dict.fromkeys([kw for kw in df_survey.get('否定ASIN', pd.Series()).dropna() if str(kw).strip()]))
+        elif country == 'C US':
+            combined_neg_exact, neg_phrase = get_c_us_campaign_neg_keywords(df_survey, campaign_name, matched_category, is_broad)
+            neg_exact = combined_neg_exact
+            neg_asin = list(dict.fromkeys([kw for kw in df_survey.get('否定ASIN', pd.Series()).dropna() if str(kw).strip()]))
         
         # 提取 ASIN
         asin_targets = []
         if is_asin:
             if country == 'B US':
                 asin_targets = find_matching_asin_columns_b_us(campaign_name, df_survey)
+            elif country == 'C US':
+                asin_targets = find_matching_asin_columns_c_us(campaign_name, df_survey, matched_category)
             else:
                 matching_columns = find_matching_asin_columns_k_eu(campaign_name, df_survey, keyword_categories) if country == 'K EU' else find_matching_keyword_columns(campaign_name, df_survey, keyword_categories, keyword_columns, 'ASIN')[0]
                 for col in matching_columns:
@@ -648,79 +861,4 @@ def generate_header_from_survey(uploaded_file, output_file, country, sheet_name=
                 neg_keywords = find_neg_keywords_k_eu(campaign_name, df_survey, keyword_categories, keyword_columns)
                 for kw in neg_keywords:
                     rows.append([
-                        product, '否定关键词', operation, campaign_name, campaign_name, '', '', '', '',
-                        campaign_name, campaign_name, '', '', '', status, '', '', '', '',
-                        kw, '否定精准匹配', '', '', '', ''
-                    ])
-        
-        # 商品定向和否定商品定向
-        if is_asin:
-            for asin in asin_targets:
-                rows.append([
-                    product, '商品定向', operation, campaign_name, campaign_name, '', '', '', '',
-                    campaign_name, campaign_name, '', '', '', status, '', '', '',
-                    cpc, '', '', '', '', '', f'asin="{asin}"'
-                ])
-            for asin in neg_asin:
-                rows.append([
-                    product, '否定商品定向', operation, campaign_name, campaign_name, '', '', '', '',
-                    campaign_name, campaign_name, '', '', '', status, '', '', '',
-                    '', '', '', '', '', '', f'asin="{asin}"'
-                ])
-    
-    # 创建 DataFrame
-    df_header = pd.DataFrame(rows, columns=columns)
-    try:
-        df_header.to_excel(output_file, index=False, engine='openpyxl')
-        st.success(f"生成完成！输出文件：{output_file}，总行数：{len(rows)}")
-        return output_file
-    except Exception as e:
-        st.error(f"写入文件 {output_file} 时出错：{e}")
-        return None
-
-# Streamlit 界面
-st.markdown('<div class="main-title">SP-批量模版生成工具</div>', unsafe_allow_html=True)
-st.markdown('<div class="instruction">请选择国家并上传 Excel 文件，点击按钮生成对应的 Header 文件（支持任意文件名的 .xlsx 文件）。<br>Please select a country and upload an Excel file, then click the button to generate the corresponding Header file (supports any .xlsx filename).</div>', unsafe_allow_html=True)
-
-# 国家选择
-country = st.selectbox("选择国家 / Select Country", ["JP", "K EU", "B US"])
-
-# 文件上传
-uploaded_file = st.file_uploader("上传 Excel 文件 / Upload Excel File", type=["xlsx"])
-
-if uploaded_file is not None:
-    # 动态生成输出文件名
-    output_file = f"header-{country.replace(' ', '_')}.xlsx"
-    
-    # 运行按钮
-    if st.button("生成 Header 文件 / Generate Header File"):
-        with st.spinner("正在处理文件... / Processing file..."):
-            result = generate_header_from_survey(uploaded_file, output_file, country)
-            if result and os.path.exists(result):
-                with open(result, "rb") as f:
-                    st.download_button(
-                        label=f"下载 {output_file} / Download {output_file}",
-                        data=f,
-                        file_name=output_file,
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                    )
-                # 调试信息
-                st.markdown("### 处理结果 / Processing Results")
-                df_result = pd.read_excel(result)
-                keyword_rows = [row for row in df_result.to_dict('records') if row['实体层级'] == '关键词']
-                st.write(f"关键词行数量 / Keyword Rows: {len(keyword_rows)}")
-                if keyword_rows:
-                    st.write(f"示例关键词行 / Example Keyword Row: 实体层级={keyword_rows[0]['实体层级']}, 关键词文本={keyword_rows[0]['关键词文本']}, 匹配类型={keyword_rows[0]['匹配类型']}")
-                product_targeting_rows = [row for row in df_result.to_dict('records') if row['实体层级'] == '商品定向']
-                st.write(f"商品定向行数量 / Product Targeting Rows: {len(product_targeting_rows)}")
-                if product_targeting_rows:
-                    st.write(f"示例商品定向行 / Example Product Targeting Row: 实体层级={product_targeting_rows[0]['实体层级']}, 竞价={product_targeting_rows[0]['竞价']}, 拓展商品投放编号={product_targeting_rows[0]['拓展商品投放编号']}")
-                if country == 'K EU':
-                    bid_adjustment_rows = [row for row in df_result.to_dict('records') if row['实体层级'] == '竞价调整']
-                    st.write(f"竞价调整行数量 / Bid Adjustment Rows: {len(bid_adjustment_rows)}")
-                    if bid_adjustment_rows:
-                        st.write(f"示例竞价调整行 / Example Bid Adjustment Row: 实体层级={bid_adjustment_rows[0]['实体层级']}, 广告位={bid_adjustment_rows[0]['广告位']}, 百分比={bid_adjustment_rows[0]['百分比']}")
-                levels = set(row['实体层级'] for row in df_result.to_dict('records'))
-                st.write(f"所有实体层级 / All Entity Levels: {levels}")
-            else:
-                st.error("生成文件失败，请检查上传的文件格式或内容。 / Failed to generate file, please check the file format or content.")
+                        product, '否定关键词',
